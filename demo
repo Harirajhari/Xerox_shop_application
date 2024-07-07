@@ -1,0 +1,305 @@
+const express = require('express');
+const router = express.Router();
+const Order = require("../../Schema/Order")
+const OrderItem = require("../../Schema/OrderItem");
+const Book = require("../../Schema/BookSchema");
+const verifyStudent = require("../../middleware/verifyStudent")
+const crypto = require('crypto');
+const razorpay = require('./razorpay');
+
+// Route to place a new order
+// router.post('/place-order', verifyStudent, async (req, res) => {
+//     const userId = req.user.id
+//     const { orderItems } = req.body;
+    
+//     if (!userId || !orderItems || orderItems.length === 0) {
+//         return res.status(400).json({ message: 'User ID and order items are required' });
+//     }
+
+//     try {
+//         // Calculate total amount
+//         let totalAmount = 0;
+//         for (let item of orderItems) {
+//             const book = await Book.findById(item.bookId);
+//             if (!book) {
+//                 return res.status(404).json({ message: `Book with ID ${item.bookId} not found` });
+//             }
+//             totalAmount += book.book_price * item.quantity;
+//         }
+
+
+//         // Create order
+//         const newOrder = new Order({
+//             userId,
+//             totalAmount,
+//             orderItems: []
+//         });
+
+//         // Save order items and associate them with the order
+//         for (let item of orderItems) {
+//             const book = await Book.findById(item.bookId);
+//             if (!book) {
+//                 return res.status(404).json({ message: `Book with ID ${item.bookId} not found` });
+//             }
+
+//             const orderItem = new OrderItem({
+//                 orderId: newOrder._id,
+//                 bookId: item.bookId,
+//                 quantity: item.quantity,
+//                 price: book.book_price
+//             });
+//             await orderItem.save();
+
+//             newOrder.orderItems.push(orderItem);
+//         }
+
+//         await newOrder.save();
+//         res.status(201).json({ message: 'Order placed successfully', order: newOrder });
+//     } catch (error) {
+//         console.error('Error placing order:', error);
+//         res.status(500).json({ message: 'Failed to place order' });
+//     }
+// });
+
+
+// Route to create a new Razorpay order
+router.post('/create-razorpay-order', verifyStudent, async (req, res) => {
+    const userId = req.user.id;
+    const { orderItems } = req.body;
+
+    if (!userId || !orderItems || orderItems.length === 0) {
+        return res.status(400).json({ message: 'User ID and order items are required' });
+    }
+
+    try {
+        // Calculate total amount
+        let totalAmount = 0;
+        for (let item of orderItems) {
+            const book = await Book.findById(item.bookId);
+            if (!book) {
+                return res.status(404).json({ message: `Book with ID ${item.bookId} not found` });
+            }
+            totalAmount += book.book_price * item.quantity;
+        }
+
+        const amountInPaise = Math.round(totalAmount * 100);
+
+        const options = {
+            amount: amountInPaise,
+            currency: 'INR',
+            receipt: `receipt_order_${new Date().getTime()}`,
+        };
+
+        // Create order in Razorpay
+        const order = await razorpay.orders.create(options);
+
+        res.status(200).json({ orderId: order.id, amount: options.amount, currency: options.currency });
+    } catch (error) {
+        console.error('Error creating Razorpay order:', error);
+        res.status(500).json({ message: 'Failed to create Razorpay order' });
+    }
+});
+
+router.post('/payment-confirmation', verifyStudent, async (req, res) => {
+    const { paymentId, orderId, signature, orderItems } = req.body;
+    const userId = req.user.id;
+
+    if (!paymentId || !orderId || !signature || !userId || !orderItems || orderItems.length === 0) {
+        return res.status(400).json({ message: 'Payment ID, order ID, signature, user ID, and order items are required' });
+    }
+
+    try {
+        // For testing, we'll skip actual signature verification and simulate it instead. In production, use real verification.
+        const isTest = true;
+        if (!isTest) {
+            const shasum = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET);
+            shasum.update(`${orderId}|${paymentId}`);
+            const digest = shasum.digest('hex');
+
+            if (digest !== signature) {
+                return res.status(400).json({ message: 'Invalid signature' });
+            }
+        }
+
+        // Calculate total amount again for verification
+        let totalAmount = 0;
+        const newOrder = new Order({
+            userId,
+            totalAmount,
+            orderItems: [],
+            orderId, 
+            paymentId
+        });
+
+        for (let item of orderItems) {
+            const book = await Book.findById(item.bookId);
+            if (!book) {
+                return res.status(404).json({ message: `Book with ID ${item.bookId} not found` });
+            }
+
+            const orderItem = new OrderItem({
+                orderId: newOrder._id,
+                bookId: item.bookId,
+                quantity: item.quantity,
+                price: book.book_price
+            });
+            await orderItem.save();
+
+            newOrder.orderItems.push(orderItem);
+            totalAmount += book.book_price * item.quantity;
+        }
+
+        newOrder.totalAmount = totalAmount;
+        await newOrder.save();
+
+        res.status(201).json({ message: 'Payment successful and order placed', order: newOrder });
+    } catch (error) {
+        console.error('Error confirming payment and placing order:', error);
+        res.status(500).json({ message: 'Failed to place order' });
+    }
+});
+
+module.exports = router;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// // without signature 
+
+// router.post('/payment-confirmation', verifyStudent, async (req, res) => {
+//     const { paymentId, orderId, signature } = req.body;
+//     const userId = req.user.id;
+
+//     if (!paymentId || !orderId || !signature || !userId) {
+//         return res.status(400).json({ message: 'Payment ID, order ID, signature, and user ID are required' });
+//     }
+
+//     try {
+//         const isTestMode = true; // Set this to false in production
+
+//         if (!isTestMode) {
+//             const shasum = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET);
+//             shasum.update(`${orderId}|${paymentId}`);
+//             const digest = shasum.digest('hex');
+
+//             if (digest !== signature) {
+//                 return res.status(400).json({ message: 'Invalid signature' });
+//             }
+//         }
+
+//         const cart = await Cart.findOne({ userId });
+//         if (!cart || cart.cartItems.length === 0) {
+//             return res.status(400).json({ message: 'Cart is empty' });
+//         }
+
+//         let totalAmount = 0;
+//         const newOrder = new Order({
+//             userId,
+//             totalAmount,
+//             orderItems: [],
+//             orderId, 
+//             paymentId
+//         });
+
+//         for (let item of cart.cartItems) {
+//             const book = await Book.findById(item.bookId);
+//             if (!book) {
+//                 return res.status(404).json({ message: `Book with ID ${item.bookId} not found` });
+//             }
+
+//             const orderItem = new OrderItem({
+//                 orderId: newOrder._id,
+//                 bookId: item.bookId,
+//                 quantity: item.quantity,
+//                 price: book.book_price
+//             });
+//             await orderItem.save();
+
+//             newOrder.orderItems.push(orderItem);
+//             totalAmount += book.book_price * item.quantity;
+//         }
+
+//         newOrder.totalAmount = totalAmount;
+//         await newOrder.save();
+//         await Cart.deleteOne({ userId });
+
+//         res.status(201).json({ message: 'Payment successful and order placed', order: newOrder });
+//     } catch (error) {
+//         console.error('Error confirming payment and placing order:', error);
+//         res.status(500).json({ message: 'Failed to place order' });
+//     }
+// });
+
+
+// //with signature
+
+// router.post('/payment-confirmation', verifyStudent, async (req, res) => {
+//     const { paymentId, orderId, signature } = req.body;
+//     const userId = req.user.id;
+
+//     if (!paymentId || !orderId || !signature || !userId) {
+//         return res.status(400).json({ message: 'Payment ID, order ID, signature, and user ID are required' });
+//     }
+
+//     try {
+//         const shasum = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET);
+//         shasum.update(`${orderId}|${paymentId}`);
+//         const digest = shasum.digest('hex');
+
+//         if (digest !== signature) {
+//             return res.status(400).json({ message: 'Invalid signature' });
+//         }
+
+//         const cart = await Cart.findOne({ userId });
+//         if (!cart || cart.cartItems.length === 0) {
+//             return res.status(400).json({ message: 'Cart is empty' });
+//         }
+
+//         let totalAmount = 0;
+//         const newOrder = new Order({
+//             userId,
+//             totalAmount,
+//             orderItems: [],
+//             orderId, 
+//             paymentId
+//         });
+
+//         for (let item of cart.cartItems) {
+//             const book = await Book.findById(item.bookId);
+//             if (!book) {
+//                 return res.status(404).json({ message: `Book with ID ${item.bookId} not found` });
+//             }
+
+//             const orderItem = new OrderItem({
+//                 orderId: newOrder._id,
+//                 bookId: item.bookId,
+//                 quantity: item.quantity,
+//                 price: book.book_price
+//             });
+//             await orderItem.save();
+
+//             newOrder.orderItems.push(orderItem);
+//             totalAmount += book.book_price * item.quantity;
+//         }
+
+//         newOrder.totalAmount = totalAmount;
+//         await newOrder.save();
+//         await Cart.deleteOne({ userId });
+
+//         res.status(201).json({ message: 'Payment successful and order placed', order: newOrder });
+//     } catch (error) {
+//         console.error('Error confirming payment and placing order:', error);
+//         res.status(500).json({ message: 'Failed to place order' });
+//     }
+// });

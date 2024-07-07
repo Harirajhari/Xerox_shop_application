@@ -1,9 +1,9 @@
-const StudentSchema = require("../Schema/StudentSchema");
+const StudentSchema = require("../../Schema/StudentSchema");
 const express = require("express");
 const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require("jsonwebtoken");
-const verifyStudent = require("../middleware/verifyStudent")
+const verifyStudent = require("../../middleware/verifyStudent")
 
 
 router.post("/signup",async(req,res)=>{
@@ -112,6 +112,22 @@ router.delete("/delete", verifyStudent, async (req, res) => {
         res.status(500).json({ message: "Internal server error" });
     }
 });
+
+router.get('/profile', verifyStudent, async (req, res) => {
+    const userId = req.user.id;
+
+    try {
+        const user = await StudentSchema.findById(userId).select('-student_password'); // Exclude password from the result
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }   
+        res.status(200).json(user);
+    } catch (error) {
+        console.error("Error fetching user profile:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+});
+
 
 
 module.exports = router;

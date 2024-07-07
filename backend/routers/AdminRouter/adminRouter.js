@@ -1,9 +1,10 @@
-const AdminSchema = require("../Schema/AdminSchema");
+const AdminSchema = require("../../Schema/AdminSchema");
 const express = require("express");
 const router = express.Router();
+const Book = require("../../Schema/BookSchema");
 const bcrypt = require('bcrypt');
 const jwt = require("jsonwebtoken");
-const verifyAdmin = require("../middleware/verifyAdmin");
+const verifyAdmin = require("../../middleware/verifyAdmin");
 
 
 
@@ -106,5 +107,26 @@ router.delete('/delete', verifyAdmin, async (req, res) => {
         res.status(500).json({ message: "Something went wrong" });
     }
 });
+
+
+router.get("/profile", verifyAdmin, async (req, res) => {
+    try {
+        // Find the admin by ID
+        const admin = await AdminSchema.findById(req.user.id).select('-admin_password');
+        if (!admin) {
+            return res.status(404).json({ message: "Admin not found" });
+        }
+
+        // Find all books posted by the admin
+        const books = await Book.find({ posted_by: req.user.id });
+
+        // Respond with admin profile and books
+        res.status(200).json({ admin, books });
+    } catch (error) {
+        console.error('Error fetching admin profile:', error);
+        res.status(500).json({ message: "Failed to fetch admin profile", error: error.message });
+    }
+});
+
 
 module.exports = router;
